@@ -21,6 +21,7 @@ library(tidyverse)
 library(janitor)
 library(boot)
 library(viridis)
+library(devtools) #to source functions off my github
 #library(broom)
 
 #For environmental data/gams:
@@ -33,10 +34,12 @@ library(marmap) #Bathymetry
 
 source("~/observer/Input/load_data_2020-06-24.R") #
 
-source("do_ratio_multi.R") #does bycatch ratios
-source("do_ratio_est_multi.R") #does ratio expansion
+source_url("https://raw.githubusercontent.com/kricherson-NOAA/ratio-bycatch-expansion/master/do_ratio_multi.R") #does bycatch ratios
+source_url("https://raw.githubusercontent.com/kricherson-NOAA/ratio-bycatch-expansion/master/do_ratio_est_multi.R") #does ratio expansion
+source_url("https://raw.githubusercontent.com/kricherson-NOAA/ratio-bycatch-expansion/master/do_boot_multi.R") #does bootstrapped expansions
+source_url("https://raw.githubusercontent.com/kricherson-NOAA/ratio-bycatch-expansion/master/do_cs_expansions.R") #does CS expansions
 
-load_data(c("WCGOP","ASHOP_proc","FT_proc", "EM", "BIO"))
+load_data(c("WCGOP","ASHOP_proc","FT_proc", "EM", "BIO")) #load_data()
 
 tday <- gsub("-", "", Sys.Date()) #Current date
 
@@ -115,43 +118,53 @@ ob %>%
 # 8 Limited Entry Trawl  2006 OR          2
 # 9 Limited Entry Trawl  2009 OR          2
 
+
+#CS data needs to be processed to get the unsampled data. However, may only want to do this once and save the df in order to save time. 
+process_cs_pre <- FALSE #set to TRUE if want to process data and save it. Set to FALSE if want to load the df of processed data
+
+if(process_cs_pre)
 #Pull out Catch Shares OB data. Starting with OBOrig_Pre and processing it to get the unsampled data. Following KS's methods from GM_2017 and YWL's old GSTG code. 
-
-ob_cs_pre <- OBOrig_Pre %>% 
-  filter(PROGRAM_ID == 14 &
-           DATATYPE %in% c('Analysis Data', 'Unsampled IFQ', 'Unsampled ZMIS', 'Failed Data') &
-           MMSBT == 0 &
-           sector == "Catch Shares") #Since we already know GSTG was only observed in the CS trawl fishery
-
-ob_ifq <- OB.processing(ob_cs_pre, 'Catch Shares', SPC)
-
-######## LE California Halibut 2011-2013
-#ob_chlb_cs <- OB.processing(ob_cs_pre, 'LE CA Halibut', SPC)
-#Note: It looks like YWL *did not* include LE CHLB with CS. Maybe because it is not covered under the BiOp? Leave out for now to be consistent.
-
-#Note: we don't need the following sectors (SSH, MWH, MWR) since no GSTG has been observed in them, but leaving the commented-out code in case we need it later
-######## Shoreside Hake 2011-2014
-#note from KS's GM code: Note that this fishery "ends" in 2014 because the definition changed from being based on logbook target
-#   to being based on landings. 2015-forward, the fishery is Midwater Hake and Midwater Rockfish
-#ob_ssh <- OB.processing(ob_cs_pre, 'Shoreside Hake', SPC)
-
-######## Midwater Hake 2015-forward
-#ob_mwh <- OB.processing(ob_cs_pre, 'Midwater Hake', SPC)
-
-######## Midwater Rockfish 2015-forward
-#ob_mwr <- OB.processing(ob_cs_pre, 'Midwater Rockfish', SPC)
-
-#### combine all processed CS data
-ob_cs <- ob_ifq %>% #bind_rows(ob_ifq, ob_ssh, ob_mwh, ob_mwr)
-  mutate(cs_gear = gear.type(.)) %>% 
-  clean_names() %>% 
-  filter(catch_disposition != '') %>%  #KS code says: remove any hauls w/no catch to avoid issues with stratification - ie, no depth
-  mutate(cs_sector = paste0("CS - ",cs_gear)) %>%  #Note this makes LE CHLB trawl "CS - Bottom Trawl" if it's included
-  mutate(gstg_count = ceiling(ifelse(spid_eqv == "GSTG" & catch_disposition == "D", #Add in column for GSTG counts
-                                     exp_sp_ct, 0)))
-
-#save(ob_cs, file = "ob_cs.Rdata")
-#load("ob_cs.Rdata")
+{
+  ob_cs_pre <- OBOrig_Pre %>% 
+    filter(PROGRAM_ID == 14 &
+             DATATYPE %in% c('Analysis Data', 'Unsampled IFQ', 'Unsampled ZMIS', 'Failed Data') &
+             MMSBT == 0 &
+             sector == "Catch Shares") #Since we already know GSTG was only observed in the CS trawl fishery
+  
+  ob_ifq <- OB.processing(ob_cs_pre, 'Catch Shares', SPC)
+  
+  ######## LE California Halibut 2011-2013
+  #ob_chlb_cs <- OB.processing(ob_cs_pre, 'LE CA Halibut', SPC)
+  #Note: It looks like YWL *did not* include LE CHLB with CS. Maybe because it is not covered under the BiOp? Leave out for now to be consistent.
+  
+  #Note: we don't need the following sectors (SSH, MWH, MWR) since no GSTG has been observed in them, but leaving the commented-out code in case we need it later
+  ######## Shoreside Hake 2011-2014
+  #note from KS's GM code: Note that this fishery "ends" in 2014 because the definition changed from being based on logbook target
+  #   to being based on landings. 2015-forward, the fishery is Midwater Hake and Midwater Rockfish
+  #ob_ssh <- OB.processing(ob_cs_pre, 'Shoreside Hake', SPC)
+  
+  ######## Midwater Hake 2015-forward
+  #ob_mwh <- OB.processing(ob_cs_pre, 'Midwater Hake', SPC)
+  
+  ######## Midwater Rockfish 2015-forward
+  #ob_mwr <- OB.processing(ob_cs_pre, 'Midwater Rockfish', SPC)
+  
+  #### combine all processed CS data
+  ob_cs <- ob_ifq %>% #bind_rows(ob_ifq, ob_ssh, ob_mwh, ob_mwr)
+    mutate(cs_gear = gear.type(.)) %>% 
+    clean_names() %>% 
+    filter(catch_disposition != '') %>%  #KS code says: remove any hauls w/no catch to avoid issues with stratification - ie, no depth
+    mutate(cs_sector = paste0("CS - ",cs_gear)) %>%  #Note this makes LE CHLB trawl "CS - Bottom Trawl" if it's included
+    mutate(gstg_count = ceiling(ifelse(spid_eqv == "GSTG" & catch_disposition == "D", #Add in column for GSTG counts
+                                       exp_sp_ct, 0)))
+  
+  save(ob_cs, file = "ob_cs.Rdata")
+  
+  }else{
+    load("ob_cs.Rdata")
+}
+#
+#
 
 #GSTG in fish tickets. This is pretty much all for human consumption, so doesn't count as bycatch, I believe
 ft %>% 
@@ -301,144 +314,171 @@ ob_cs_bt <- ob_cs %>%
 
 ###############Expand to unsampled data####################
 
-#Which kinds of unsampled data do we have? Failed data, unsampled IFQ, Unsampled ZMIS
-ob_cs_bt %>% 
-  group_by(datatype) %>% 
-  summarise(n=n())
-# datatype             n
-# <chr>            <int>
-# 1 Analysis Data  1827358
-# 2 Failed Data       1028
-# 3 Unsampled IFQ     1997
-# 4 Unsampled ZMIS    4093
+cs_gstg <- do_cs_expansion(ob_cs_bt, c("year", "r_state"), "Green Sturgeon")
 
-##########################
-####   Unsampled NIFQ  ###
-##########################
+range(cs_gstg$n_obs_ves)
+#[1]  3 46
 
-#Step 1. Identify hauls with unsampled NIFQ (following analyst manual here)
-#NIFQ unsampled entries
-nifq_cs <- filter(ob_cs_bt, datatype == 'Unsampled IFQ' & 
-                    catch_category_code == 'NIFQ' &
-                    catch_disposition == 'D' &
-                    ifq == 0) 
+cs_gstg_out <- cs_gstg %>% 
+  mutate_if(is.numeric, round, 1) %>%
+  dplyr::select(Year = year, 
+                State= r_state, 
+                `Observed bycatch` = obs_byc_ct,
+                `Observed groundfish landings (MT)` = obs_tgt_mt,
+                `Fleet-total groundfish landings (MT)` = total_tgt_mt,
+                `Groundfish landings sampled (%)` = pct_tgt_obs,
+                `Estimated bycatch from unsampled catch` = est_unsamp_ct,
+                `Fleet total bycatch` = total_byc_ct) %>% 
+  arrange(State, Year)
 
-#All hauls with unsampled NIFQ 
-nifq_hauls_cs <-filter(ob_cs_bt, haul_id %in% nifq_cs$haul_id)
+write_csv(cs_gstg_out, paste0(out_drive, "cs_gstg_", tday, ".csv"))
 
-#Step 2. Identify hauls that need to be expanded (hauls where "Species is present in strata, but not listed as species specific discard in a given haul")
+##%######################################################%##
+#                                                          #
+####                 California Halibut                 ####
+#                                                          #
+##%######################################################%##
 
-nifq_gstg_cs <- filter(nifq_hauls_cs, spid_eqv != "GSTG")
-#This is all hauls with unsampled NIFQ and no GS (turns out to be all unsampled NIFQ hauls in this case)
+#Relevant notes from YWL code:
+## NOTE 2: There are 3 final products based on stratification
+#  (1) 1st product is summarized with season strata, 
+#  (2) 2nd product is summarized without season strata (but only yearly) for the years 2011-2013.
+#  (3) 3rd product is summarized based on combined sectors (LE+OA) at annual time step for the years 2011-2013.
+#  Prior to 2011, the result should be presented with season (as done in previous report) 
+#  Since 2011, the result should be presented at annual time scale to avoid confidentiality issue
 
-nifq_gstg_hauls_cs <- filter(ob_cs_bt, haul_id %in% nifq_gstg_cs$haul_id)
+#  Also, bycatch numbers should be reported as LE+OA combined, because of too few vessel numbers operating in LE sector since 2011
+#  For LE portion of CA halibut fishery, landing amount cannot be seprately reported in the annual GSTG bycatch report to avoid confidentiality issue, 
+#  because coverage table product (by KS) does not report LE coverage as separate, but as combined with IFQ bottom trawl fishery sector
 
-#Step 3. Get expansion factor (sum of unsampled NIFQ discarded weight in strata)
-nifq_expansion_cs <- nifq_cs %>% 
-  group_by(year, state = r_state) %>% 
-  summarise(total_uns_nifq = sum(mt))
+# Note that, because of low fishing rates in 'LE CA halibut' fishery after 2010, LE and OA need to be combined for the later years for bycatch numbers #
+# Plus, coverage rate calculation for 'LE CA halibut' is close to 100%, but 'Unsampled ZMIS' portion needs to be accessed separately.
+#End YWL notes
 
-#Step 4. Calculate bycatch ratio (sum of count or weight of sampled protected species/sum of sampled discarded weight for all non-IFQ species in strata), then join expansion factor and calculate expanded bycatch ratio
-byc_nifq_cs <- ob_cs_bt %>%
-  filter(datatype == "Analysis Data" &
-           catch_disposition == "D") %>% 
-  group_by(year, state = r_state) %>% 
-  summarise(total_gstg_count = sum(gstg_count),
-            total_nifq_mt = sum(mt[ ifq == 0 ])) %>% 
-  mutate(byc_ratio = total_gstg_count/total_nifq_mt) %>% 
-  left_join(nifq_expansion_cs, by = c("year", "state")) %>% 
-  mutate(est_nifq_gstg = total_uns_nifq * byc_ratio,
-         est_nifq_gstg = ifelse(is.na(est_nifq_gstg), 0, est_nifq_gstg)) %>%  #Because there is one year/state without any NIFQ catch
-  arrange(state,year)
+#Observed CHLB data
+ob_chlb <- ob %>% 
+  filter(sector == "OA CA Halibut" |
+           sector == "LE CA Halibut") %>% 
+  mutate(stratum = paste(sector,year,season,sep="_"))
 
-##########################
-####   Unsampled ZMIS  ###
-##########################
-byc_zmis_cs <- ob_cs_bt %>%
-  group_by(year, state = r_state) %>% 
-  summarise(total_gstg_count  = sum(gstg_count[datatype == "Analysis Data" & #Numerator of ratio (sum of sampled discarded GS)
-                                                 catch_disposition == "D"]),
-            total_dis_mt = sum(mt[datatype == "Analysis Data" & #Denominator of ratio (sum of sampled discarded weight)
-                                    catch_disposition == "D"]),
-            total_zmis_mt = sum(mt[datatype == "Unsampled ZMIS" & #Expansion factor (sum of unsampled ZMIS discarded weight in strata)
-                                     catch_category_code == "ZMIS" &
-                                     species_composition_id == 0 & #I'm not really sure what this field means and the ML is not very informative...
-                                     catch_disposition == "D"])) %>% 
-  mutate(byc_ratio = total_gstg_count/total_dis_mt,
-         est_zmis_gstg = byc_ratio * total_zmis_mt) %>% 
-  arrange(state,year)
+#Fish ticket CHLB data
+ft_chlb <- filter(ft,sector == "OA CA Halibut" |
+                  sector == "LE CA Halibut") %>% 
+  mutate(stratum = paste(sector,year,season,sep="_"))
 
-##########################
-####   Unsampled UNST  ###
-##########################
-byc_unst_cs <- ob_cs_bt %>% 
-  group_by(year, state = r_state) %>% 
-  summarise(total_gstg_count  = sum(gstg_count[datatype == "Analysis Data" & #Numerator of ratio (sum of sampled discarded GS)
-                                                 catch_disposition == "D"]),
-            total_mt = sum(mt[datatype == "Analysis Data"]), #Denominator of ratio (sum of sampled weight for all species, retained and discarded)
-            total_unst_mt = sum(mt[datatype == "Unsampled ZMIS" & #Expansion factor (sum of UNST weight in strata)
-                                     catch_category_code == "UNST" &
-                                     species_composition_id == 0], na.rm=T)) %>% 
-  mutate(byc_ratio = total_gstg_count/total_mt,
-         est_unst_gstg = byc_ratio * total_unst_mt) %>% 
-  arrange(state,year)
+########################################################
+#First: OA and LE separate, 2002-2010, winter and summer
+########################################################
 
-##########################
-####   Failed data     ###
-##########################
-failed_cs_trips <- unique(filter(ob_cs_bt, datatype == "Failed Data")$trip_id)
+#This is an easy way to get coverage so we know which strata to bootstrap, though we won't actually use the estimates
+chlb_gstg1 <- do_ratio_multi(ob_dat = filter(ob_chlb, year < 2011),
+                                 #ft_dat = filter(ft_chlb, year < 2011),
+                                 strata = c("year", "sector", "season","stratum"),
+                                 expfactor = "tgt_mt",
+                                 bycatchspp = "Green Sturgeon",
+                                 bycatchunit = "gstg_count",
+                                 management_groups = FALSE)
 
-byc_failed_cs <- ob_cs_bt %>% 
-  group_by(year, state = r_state) %>% 
-  summarise(total_gstg_count  = sum(gstg_count[datatype == "Analysis Data" & #Numerator of ratio (sum of sampled discarded GS)
-                                                 catch_disposition == "D"]),
-            total_gfr_mt = sum(gfr_mt[datatype == "Analysis Data"], na.rm = T), #Denominator of ratio (sum of targeted retained)
-            total_failed_mt = sum(gfr_mt[trip_id %in% failed_cs_trips], na.rm=T)) %>% #Expansion factor (sum of targeted retained in failed trips in strata)
-  mutate(byc_ratio = total_gstg_count/total_gfr_mt,
-         est_failed_gstg = byc_ratio * total_failed_mt) %>% 
-  arrange(state,year)
+#as.data.frame(dplyr::select(chlb_gstg1, year, sector, season, n_obs_ves, stratum)) #To guide choice of pooling strata
 
-######### Now put everything together for output ###############
+#This identifies confidential strata and the adjacent strata we will pool over for bootstrapping. Easier to ID by hand because there are so many special cases.
+chlb_conf_strata <- filter(chlb_gstg1, n_obs_ves < 3 & !is.na(n_obs_ves) & year < 2011) %>% 
+  dplyr::select(year, season, stratum, sector, n_obs_ves) %>% 
+  mutate(adjacent_stratum1 = case_when(stratum == "LE CA Halibut_2002_summer" ~ "LE CA Halibut_2003_summer", 
+                                       stratum == "LE CA Halibut_2010_summer" ~ "LE CA Halibut_2009_summer",
+                                       stratum == "LE CA Halibut_2010_winter" ~ "LE CA Halibut_2008_winter",
+                                       stratum == "OA CA Halibut_2003_winter" ~ "OA CA Halibut_2004_winter",
+                                       stratum == "OA CA Halibut_2004_summer" ~ "OA CA Halibut_2003_summer",
+                                       stratum == "OA CA Halibut_2005_summer" ~ "OA CA Halibut_2004_summer",
+                                       stratum == "OA CA Halibut_2009_summer" ~ "OA CA Halibut_2008_summer",
+                                       stratum == "OA CA Halibut_2009_winter" ~ "OA CA Halibut_2008_winter"
+  ), 
+  adjacent_stratum2 = case_when(stratum == "LE CA Halibut_2002_summer" ~ "LE CA Halibut_2004_summer",
+                                stratum == "LE CA Halibut_2010_summer" ~ "LE CA Halibut_2011_summer",
+                                stratum == "LE CA Halibut_2010_winter" ~ "LE CA Halibut_2011_winter",
+                                stratum == "OA CA Halibut_2003_winter" ~ "OA CA Halibut_2005_winter",
+                                stratum == "OA CA Halibut_2004_summer" ~ "OA CA Halibut_2005_summer",
+                                stratum == "OA CA Halibut_2005_summer" ~ "OA CA Halibut_2007_summer",
+                                stratum == "OA CA Halibut_2009_summer" ~ "OA CA Halibut_2010_summer",
+                                stratum == "OA CA Halibut_2009_winter" ~ "OA CA Halibut_2010_winter"
+  )) 
 
-#Summarise sampled data (note we treat 'Unsampled IFQ' as sampled according to YWL code)
-ob_cs_samp <- ob_cs_bt %>%
-  filter(datatype == "Analysis Data" | 
-           (datatype == "Unsampled IFQ" & 
-              catch_category_code != "NIFQ")) %>% 
-  group_by(year, state = r_state) %>% 
-  summarise(obs_gfr_mt = sum(gfr_mt, na.rm = T),
-            obs_hauls = n_distinct(haul_id),
-            obs_gstg = sum(gstg_count),
-            n_obs_ves = n_distinct(drvid))
+#unobs_strata <- filter(chlb_gstg1, is.na(n_obs_ves))$stratum
 
-range(ob_cs_samp$n_obs_ves) #Make sure we don't have <3 vessels in any strata
+#For bootstrapping, create a df that includes the pooled data. Do this by first getting the unpooled data, then looping through the strata that need to be pooled and assigning the adjacted strata to the pooled stratum
+ob_chlb_pooled <- ob_chlb %>% 
+  filter(year < 2011 &
+           !(stratum %in% chlb_conf_strata$stratum) & 
+           datatype =="Analysis Data") %>% 
+  mutate(pooled = "no") %>%  #For checking purposes...
+  ungroup()
 
-ob_cs_unsamp <- ob_cs_bt %>%
-  filter(datatype != "Analysis Data" & 
-           !(datatype == "Unsampled IFQ" & 
-               catch_category_code != "NIFQ")) %>% 
-  group_by(year, state = r_state) %>% 
-  summarise(unobs_gfr_mt = sum(gfr_mt, na.rm = T),
-            unobs_hauls = n_distinct(haul_id))
+#Loop through confidential strata, summarise by vessel across pooled strata, add to df defined above
+for(i in 1: nrow(chlb_conf_strata))
+{
+  pooled_ob_df <- ob_chlb %>% 
+    filter(stratum %in% chlb_conf_strata[i, c("stratum", "adjacent_stratum1", "adjacent_stratum2")] & 
+             datatype =="Analysis Data") %>% 
+    mutate(stratum = chlb_conf_strata$stratum[i]) %>% #stratum now contains adjacent stratum.
+    mutate(pooled = "yes")
+  
+    ob_chlb_pooled <- bind_rows(ob_chlb_pooled, pooled_ob_df)
+}
 
-#Put observed and estimated GSTG together, calculate coverage.
-cs_out_table <- ob_cs_samp %>%
-  full_join(ob_cs_unsamp, by = c("year", "state")) %>% 
-  left_join(dplyr::select(byc_nifq_cs, year, state, est_nifq_gstg), by = c("year", "state")) %>% 
-  left_join(dplyr::select(byc_zmis_cs, year, state, est_zmis_gstg), by = c("year", "state")) %>% 
-  left_join(dplyr::select(byc_unst_cs, year, state, est_unst_gstg), by = c("year", "state")) %>%
-  left_join(dplyr::select(byc_failed_cs, year, state, est_failed_gstg), by = c("year", "state")) %>%
-  replace(., is.na(.), 0) %>% 
-  rowwise() %>% 
-  mutate(exp_gstg = sum(est_nifq_gstg, est_zmis_gstg, est_unst_gstg),
-         total_exp_gstg = sum(obs_gstg, est_nifq_gstg, est_zmis_gstg, est_unst_gstg, na.rm = T),
-         total_gfr_mt = sum(obs_gfr_mt, unobs_gfr_mt, na.rm = T),
-         pct_gfr_obs = (obs_gfr_mt / (obs_gfr_mt + unobs_gfr_mt)) * 100) %>% 
-  dplyr::select(state, year, obs_gstg, obs_gfr_mt, total_gfr_mt, pct_gfr_obs, exp_gstg, total_exp_gstg) %>% 
-  mutate_if(is.numeric, round, 1) %>% 
-  arrange(desc(state),year)
+#make sure we have all strata (should be TRUE)
+nrow(distinct(dplyr::select(ungroup(ob_chlb_pooled),stratum,pooled)))==length(unique(filter(ob_chlb, year<2011 & datatype == "Analysis Data")$stratum))
+unique(sort(distinct(dplyr::select(ungroup(ob_chlb_pooled),stratum,pooled))$stratum) == sort(unique(filter(ob_chlb, year<2011 & datatype == "Analysis Data")$stratum)))
 
-names(cs_out_table) <- c("State", "Year", "Observed bycatch", "Observed groundfish landings (MT)", "Fleet-total groundfish landings (MT)", "Groundfish landings sampled (%)", "Estimated bycatch from unsampled catch", "Fleet-total bycatch")
+#make sure all "strata" now have >=3 vessels 
+ob_chlb_pooled %>% 
+  group_by(stratum) %>% 
+  summarise(n_vessels = n_distinct(drvid)) %>% 
+  ungroup %>% 
+  summarise(min=min(n_vessels),max=max(n_vessels))
+
+# A tibble: 1 x 2
+# min   max
+# <dbl> <dbl>
+#   1     3    13
+
+#Now should be able to calculate bycatch ratios and estimated bycatch using the do_boot_multi function, though note that coverage output does not account for pooling (I think that's how we've reported it in the past, so that is not a problem). Note that the strata that we report at and the strata that we use to summarise data at the vessel level are different ("strata" and "vessel_strata" in the function, respectively)
+
+chlb_booted <- do_boot_multi(ob_dat = ob_chlb_pooled, 
+                                    ft_dat = filter(ft_chlb, year < 2011), 
+                                    strata = "stratum", 
+                                    vessel_strata = c("stratum", "sector", "year", "season"), 
+                                    expfactor = "tgt_mt", 
+                                    bycatchspp = "Green Sturgeon", 
+                                    bycatchunit = "gstg_count", 
+                                    seed = 42)
+
+
+chlb_02_to_10_out <- chlb_booted %>% 
+  separate(stratum, c("Sector", "Year", "Season"), sep = "_") %>% #get sector, year, season from the stratum
+  mutate_at(vars(point_est_ratio, upper_ci, lower_ci), round, 2) %>% 
+  mutate_at(vars(total_expf, fleet_expf, pct_cvg), round, 1) %>% 
+  mutate_at(vars(est_byc, est_byc_lower_trunc, est_byc_upper), round, 0) %>% 
+  mutate(pct_cvg = ifelse(is.na(n_obs_ves), 0, pct_cvg)) %>% 
+  mutate_at(vars(-n_obs_ves), as.character) %>% #So we can replace confidential data with * and unobserved years with --
+  mutate_at(vars(total_byc, total_expf, pct_cvg), list(~ifelse( n_obs_ves < 3, "*", .))) %>% 
+  mutate_at(vars(-fleet_expf, -n_obs_ves), list(~ifelse(is.na(n_obs_ves), "--", .))) %>% 
+  dplyr::select(-n_obs_ves) %>%
+  ungroup() %>% 
+  dplyr::select(Sector, 
+                Year, 
+                Season, 
+                `Observed bycatch` = total_byc, 
+                `Observed CA halibut landings (MT)` = total_expf, 
+                `Fleet total CA halibut landings (MT)` = fleet_expf,
+                `CA halibut landings sampled (%)` = pct_cvg, 
+                `Bycatch ratio` = point_est_ratio, 
+                `Lower CI of ratio` = lower_ci,
+                `Upper CI of ratio` = upper_ci,
+                `Fleet-total bycatch` = est_byc,
+                `Lower CI of bycatch` = est_byc_lower_trunc, 
+                `Upper CI of bycatch` = est_byc_upper) %>% 
+  arrange(Sector, Year, desc(Season))
+#somehow 2011 ft data snuck in here I think...rmove later
 
 ##%######################################################%##
 #                                                          #
@@ -455,27 +495,38 @@ ob_le <- ob %>%
 
 ob_le_formap <- ob_le %>%
   filter(gear == "Bottom Trawl") %>% 
-  dplyr::select(sector, drvid, haul_id, avg_lat, avg_long, gfr_mt, gstg_count)
+  group_by(sector, drvid, haul_id, avg_lat, avg_long, haul_duration) %>% 
+  summarise(gstg_count = sum(gstg_count),
+            gfr_mt = sum(gfr_mt, na.rm = T))
 
 #Subset to CS bottom trawl data (only non-hake CS sector that encounters GSTG)
 ob_cs_bt <- ob_cs %>% 
-  filter(cs_sector == "CS - Bottom Trawl")
+  filter(datatype == "Analysis Data" & 
+           cs_sector == "CS - Bottom Trawl") 
 
 ob_cs_formap <- ob_cs_bt %>% 
-  dplyr::select(sector, drvid, haul_id, avg_lat, avg_long, gfr_mt, gstg_count)
+  group_by(sector, drvid, haul_id, avg_lat, avg_long, haul_duration) %>% 
+  summarise(gstg_count = sum(gstg_count),
+            gfr_mt = sum(gfr_mt, na.rm = T))
 
-ob_lecs_formap <- bind_rows(ob_le_formap)
+ob_lecs_formap <- bind_rows(ob_le_formap, ob_cs_formap) %>% 
+  mutate(cpue_haul_dur = gstg_count/haul_duration,
+         cpue_tgt_mt = gstg_count/gfr_mt)
 
 write.csv(ob_lecs_formap, file = paste0(out_drive, "LE_CS_spatial_GSTG_data_", tday, ".csv"))
 ####CHLB#########
 #Observed CHLB data
 ob_chlb <- ob %>% 
-  filter(sector == "OA CA Halibut" |
-           sector == "LE CA Halibut") %>% 
-  mutate(stratum = paste(sector,year,season,sep="_"))
+  filter((sector == "OA CA Halibut" |
+           sector == "LE CA Halibut") & 
+           datatype == "Analysis Data") 
 
 ob_chlb_formap <- ob_chlb %>%
-  dplyr::select(sector, drvid, haul_id, avg_lat, avg_long, chlb_mt, gstg_count)
+  group_by(sector, drvid, haul_id, avg_lat, avg_long, haul_duration) %>% 
+  summarise(gstg_count = sum(gstg_count),
+            chlb_mt = sum(chlb_mt, na.rm = T)) %>% 
+  mutate(cpue_haul_dur = gstg_count/haul_duration,
+         cpue_tgt_mt = gstg_count/chlb_mt)
 
 write.csv(ob_chlb_formap, file = paste0(out_drive, "CHLB_spatial_GSTG_data_", tday, ".csv"))
 
