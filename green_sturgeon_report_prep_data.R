@@ -230,6 +230,9 @@ bio <- BIOOrig_Proc %>%
 #End inital data processing section
 #Next sections will create bycatch tables by sector
 
+#keep track of sectors that are done?
+done_sectors <- character(0)
+
 ##%######################################################%##
 #                                                          #
 ####          LE, PHLB, NS expansions together          ####
@@ -303,6 +306,9 @@ le_gstg_out <- ncs_gstg_out %>%
 
 write_csv(le_gstg_out, paste0(out_drive, "le_gstg_", tday, ".csv"))
 
+#add these sectors to the done sectors list
+done_sectors <- c(done_sectors, unique(ncs_gstg_out$sector))
+
 ##%######################################################%##
 #                                                          #
 ####                 Catch shares trawl                 ####
@@ -332,6 +338,9 @@ cs_gstg_out <- cs_gstg %>%
   arrange(State, Year)
 
 write_csv(cs_gstg_out, paste0(out_drive, "cs_gstg_", tday, ".csv"))
+
+done_sectors <- c(done_sectors, paste(unique(ob_cs_bt$sector), unique(ob_cs_bt$gear_2)))
+
 
 ##%######################################################%##
 #                                                          #
@@ -461,7 +470,7 @@ chlb_02_to_10_out <- chlb_booted %>%
   mutate(pct_cvg = ifelse(is.na(n_obs_ves), 0, pct_cvg)) %>% 
   mutate_at(vars(-n_obs_ves), as.character) %>% #So we can replace confidential data with * and unobserved years with --
   mutate_at(vars(total_byc, total_expf, pct_cvg), list(~ifelse( n_obs_ves < 3, "*", .))) %>% 
-  mutate_at(vars(-fleet_expf, -n_obs_ves), list(~ifelse(is.na(n_obs_ves), "--", .))) %>% 
+  mutate_at(vars(-fleet_expf, -n_obs_ves, -Sector, -Year, -Season, -pct_cvg), list(~ifelse(is.na(n_obs_ves), "--", .))) %>% 
   dplyr::select(-n_obs_ves) %>%
   ungroup() %>% 
   dplyr::select(Sector, 
@@ -478,7 +487,56 @@ chlb_02_to_10_out <- chlb_booted %>%
                 `Lower CI of bycatch` = est_byc_lower_trunc, 
                 `Upper CI of bycatch` = est_byc_upper) %>% 
   arrange(Sector, Year, desc(Season))
-#somehow 2011 ft data snuck in here I think...rmove later
+
+########################################################
+#Second: OA and LE combined, 2011-2017
+########################################################
+#Following last year: estimate OA and LE separately, then combine
+oa_chlb_booted <- do_boot_multi(ob_dat = filter(ob_chlb, sector == "OA CA Halibut" & year >=2011), 
+                             ft_dat = filter(ft_chlb, sector == "OA CA Halibut" & year >= 2011), 
+                             strata = "year", 
+                             vessel_strata = "year", 
+                             expfactor = "tgt_mt", 
+                             bycatchspp = "Green Sturgeon", 
+                             bycatchunit = "gstg_count", 
+                             seed = 42)
+
+le_chlb <- do_cs_expansion(filter(ob_chlb, sector == "LE CA Halibut" & year >=2011), 
+                           strata = "year", 
+                           bycatchspp = "Green Sturgeon") #almost no expanded GSTG (will be lost in rounding)
+
+#combine LE and OA
+chlb_11_to_19_out <- oa_chlb_booted %>% 
+  mutate(year = as.numeric(year)) %>% 
+  left_join(dplyr::select(le_chlb, year, obs_byc_ct, total_byc_ct, pct_obs_le = pct_tgt_obs, le_obs_tgt_mt = obs_tgt_mt),
+            by = "year") %>% 
+  replace(is.na(.), 0) %>% 
+  mutate(obs_gstg_count_oale = obs_byc_ct + total_byc, #Sum of observed LE and OA GSTG
+         exp_gstg_count_oale = total_byc_ct + est_byc, #Sum of expanded LE and OA GSTG
+         lower_ci_bycatch_oale = total_byc_ct + est_byc_lower_trunc,
+         upper_ci_bycatch_oale = total_byc_ct + est_byc_upper) %>% 
+  mutate(lower_ci_bycatch_oale = ifelse(lower_ci_bycatch_oale < obs_gstg_count_oale, #Truncate
+                                        obs_gstg_count_oale, 
+                                        lower_ci_bycatch_oale),
+         pct_obs_le = as.character(pct_obs_le),
+         pct_obs_le = ifelse(pct_obs_le == "0", "--", pct_obs_le)) %>%
+  mutate_if(is.numeric, round, 1) %>%
+  mutate(year = as.character(year)) %>% 
+  mutate(year = ifelse(pct_obs_le == "--",
+                       paste0(year, "*"), 
+                       year)) %>% #To indicate no LE landings
+  dplyr::select(`Year` = year, 
+                `LE + OA combined observed bycatch` = obs_gstg_count_oale, 
+                `LE + OA combined fleet-total bycatch` = exp_gstg_count_oale, 
+                `Lower CI of fleet-total bycatch` = lower_ci_bycatch_oale, 
+                `Upper CI of fleet-total bycatch` = upper_ci_bycatch_oale, 
+                `LE CA halibut landings sampled (%)` = pct_obs_le, 
+                `OA observed CA halibut landings (MT)` = total_expf, 
+                `OA fleet-total CA halibut landings (MT)` = fleet_expf, 
+                `OA CA halibut landings sampled (%)` = pct_cvg)
+
+names(chlb_out_2) <- c("Year", "LE + OA combined observed bycatch", "LE + OA combined fleet-total bycatch", "Lower CI of fleet-total bycatch", "Upper CI of fleet-total bycatch", "LE CA halibut landings sampled (%)", "OA observed CA halibut landings (MT)", "OA fleet-total CA halibut landings (MT)", "OA CA halibut landings sampled (%)")
+
 
 ##%######################################################%##
 #                                                          #
