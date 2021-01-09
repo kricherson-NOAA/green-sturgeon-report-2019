@@ -535,7 +535,172 @@ chlb_11_to_19_out <- oa_chlb_booted %>%
                 `OA fleet-total CA halibut landings (MT)` = fleet_expf, 
                 `OA CA halibut landings sampled (%)` = pct_cvg)
 
-names(chlb_out_2) <- c("Year", "LE + OA combined observed bycatch", "LE + OA combined fleet-total bycatch", "Lower CI of fleet-total bycatch", "Upper CI of fleet-total bycatch", "LE CA halibut landings sampled (%)", "OA observed CA halibut landings (MT)", "OA fleet-total CA halibut landings (MT)", "OA CA halibut landings sampled (%)")
+##################### write both to csv chlb_02_to_10_out
+
+write_csv(chlb_02_to_10_out, paste0(out_drive, "chlb_02_to_10_gstg_out_", tday, ".csv"))
+
+write_csv(chlb_11_to_19_out, paste0(out_drive, "chlb_11_to_19_gstg_out_", tday, ".csv"))
+
+##%######################################################%##
+#                                                          #
+####                    At-Sea Hake                     ####
+#                                                          #
+##%######################################################%##
+
+ashop_gstg_out <- ashop %>%
+  mutate(sector2 = case_when(sector == "ATSEA TRIBAL" ~ "Tribal Mothership",
+                             sector == "MOTHERSHIP" ~ "Non-tribal Mothership",
+                             sector == "CATCHER-PROCESSOR" ~ "Catcher Processor")) %>% 
+  mutate(exp_gstg_count = ifelse(spid_eqv == "GSTG" & !is.na(spid_eqv), 
+                                 expanded_num_2sector_level, 0)) %>% 
+  group_by(sector2,year) %>% 
+  summarise(total_gstg_count = sum(gstg_count),
+            total_exp_gstg_count = sum(exp_gstg_count),
+            n_samp_tows = n_distinct(haul_id[haul_sampled_by !=0 ]),
+            n_tows = n_distinct(haul_id),
+            total_pwht_mt = sum(pwht_mt),
+            pct_sampled = (n_samp_tows/n_tows) * 100,
+            n_obs_ves = n_distinct(drvid))%>% 
+  ungroup() %>% 
+  mutate_if(is.numeric, round, digits = 1) %>% 
+  mutate_at(c("total_gstg_count", "n_samp_tows","total_pwht_mt", "pct_sampled"), as.character) %>% #So that we can replace confidential data with *
+  mutate_at(c("total_gstg_count", "n_samp_tows","total_pwht_mt", "pct_sampled"), funs(ifelse( n_obs_ves < 3, "*", .))) %>% #Replace confidential data with *
+  tidyr::complete(year, sector2) %>% 
+  replace(is.na(.), 0) %>% 
+  dplyr::select(-n_tows, -n_obs_ves) %>% 
+  filter(sector2 != "Tribal Mothership") %>% 
+  arrange(sector2, year) %>% 
+  rename(Year = year,
+         Sector = sector2,
+         `Observed bycatch` = total_gstg_count,
+         `Fleetwide expanded bycatch` = total_exp_gstg_count,
+         `Number sampled tows` = n_samp_tows,
+         `Sampled hake landings (MT)` = total_pwht_mt,
+         `% tows sampled` = pct_sampled)
+
+write_csv(ashop_gstg_out, paste0(out_drive, "ashop_gstg_out.csv", tday, ".csv"))
+
+
+############################################################################################
+
+################## End of bycatch tables ###################################################
+
+############################################################################################
+
+
+##%######################################################%##
+#                                                          #
+####                Depth distributions                 ####
+#                                                          #
+##%######################################################%##
+
+#It looks like we do depth by haul for bottom trawl fisheries in previous reports
+
+#Cutting into depth bins takes a while so maybe just do it once, then save and reload
+
+make_depth_bin_dfs <- TRUE
+
+if (make_depth_bin_dfs)
+{
+  #OB/LE 
+  ob_le_cs <- filter(ob, (sector == "Catch Shares" & gear %in% c("Bottom Trawl"))|
+                       sector == "Limited Entry Trawl") %>% 
+    filter(!is.na(avg_depth)) %>%  # 2 entries
+    group_by(haul_id, avg_depth, sector) %>% 
+    summarise(total_gstg = sum(gstg_count),
+              drvid=drvid[1]) %>% 
+    mutate(depth_bin1 = cut(avg_depth, breaks=c(seq(0, 1200, by = 100), Inf), 
+                            labels=c(paste(seq(0, 1100,by= 100),seq(100, 1200, by= 100),sep="-"), ">1200")), #All depths in 100 fm bins
+           depth_bin2 = cut(avg_depth, breaks=c(seq(0, 100, by = 10), Inf), 
+                            labels=c(paste(seq(0, 90,by = 10),seq(10, 100 ,by = 10),sep="-"),">100"))) %>% #Depths <100 in 10 fm bins
+    ungroup()
+  
+  save(ob_le_cs, file = "ob_le_cs.Rdata")
+  
+  ob_chlb <- ob %>% 
+    filter(sector == "OA CA Halibut" |
+             sector == "LE CA Halibut")  %>% 
+    filter(!is.na(avg_depth)) %>%  # 1 entry
+    group_by(haul_id, avg_depth, sector) %>% 
+    summarise(total_gstg = sum(gstg_count),
+              drvid = drvid[1]) %>% #Could be some bins with <3 vessels? %>% 
+    mutate(depth_bin1 = cut(avg_depth, breaks=c(seq(0, 1200, by = 100), Inf), 
+                            labels=c(paste(seq(0, 1100,by= 100),seq(100, 1200, by= 100),sep="-"), ">1200")), #All depths in 100 fm bins
+           depth_bin2 = cut(avg_depth, breaks=c(seq(0, 100, by = 10), Inf), 
+                            labels=c(paste(seq(0, 90,by = 10),seq(10, 100 ,by = 10),sep="-"),">100"))) %>% 
+    ungroup()
+  
+  save(ob_chlb, file = "ob_chlb.Rdata")
+  
+} else{
+  
+  load("ob_le_cs.Rdata")
+  load("ob_chlb.Rdata")
+  
+  
+}
+
+##############Make LE/CS figure
+
+#check confidentiality (in the bins I'll be putting in the report)
+ob_le_cs %>% 
+  group_by(depth_bin2, sector) %>% 
+  summarise(n_ves=n_distinct(drvid)) %>% 
+  filter(n_ves<3)
+
+#I am including this figure in the report 
+le_cs_bins <- ob_le_cs %>% 
+  mutate(sector = ifelse(sector == "Catch Shares", "Individual Fishing Quota Trawl", sector)) %>% #For consistency (use IFQ not CS in report)
+  filter(!is.na(avg_depth) & depth_bin2 != ">100") %>% 
+  group_by(sector) %>% 
+  mutate(n_hauls = n_distinct(haul_id)) %>% 
+  ungroup() %>% 
+  mutate(sector_n = paste0(sector,", n=", n_hauls)) %>% #This was done so the facet titles will have the total number of observed hauls in them
+  group_by(depth_bin2, sector_n) %>% 
+  summarise(n_hauls = n_distinct(haul_id),
+            pct_hauls_gstg = (n_distinct(haul_id[total_gstg>0]) / n_distinct(haul_id)) * 100) %>% 
+  ggplot()+
+  aes(x = depth_bin2, y = n_hauls, fill = pct_hauls_gstg)+
+  geom_bar(stat="identity")+
+  facet_wrap(~sector_n)+
+  scale_fill_viridis(name="% observed\nhauls with\ngreen sturgeon")+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  xlab("Depth (fm)")+
+  ylab("Number of hauls")
+
+ggsave(le_cs_bins, file = paste0(out_drive, "le_cs_depthbins_", tday, ".png"), height =5, width=8)
+
+####### Make CHLB figure
+ob_chlb %>% 
+  group_by(depth_bin2, sector) %>% 
+  summarise(n_ves=n_distinct(drvid)) %>% 
+  filter(n_ves<3)
+
+chlb_bins <- ob_chlb %>% 
+  filter(!is.na(avg_depth) & depth_bin2 != ">100") %>% 
+  group_by(sector) %>% 
+  mutate(n_hauls = n_distinct(haul_id)) %>% 
+  ungroup() %>% 
+  mutate(sector_n = paste0(sector,", n=", n_hauls)) %>% #This was done so the facet titles will have the total number of observed hauls in them
+  group_by(depth_bin2, sector_n) %>% 
+  summarise(n_hauls = n_distinct(haul_id),
+            pct_hauls_gstg = (n_distinct(haul_id[total_gstg>0]) / n_distinct(haul_id))*100,
+            n_ves = n_distinct(drvid)) %>% 
+  #filter(n_ves>2) %>% 
+  ggplot()+
+  aes(x = depth_bin2, y = n_hauls, fill = pct_hauls_gstg)+
+  geom_bar(stat="identity")+
+  facet_wrap(~sector_n)+
+  scale_fill_viridis(name="% observed\nhauls with\ngreen sturgeon")+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  xlab("Depth (fm)")+
+  ylab("Number of hauls")
+
+ggsave(chlb_bins, file = paste0(out_drive, "chlb_depthbins_", tday, ".png"), height =5, width=8)
+
+
 
 
 ##%######################################################%##
